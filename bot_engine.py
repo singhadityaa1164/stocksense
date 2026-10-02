@@ -60,7 +60,7 @@ STYLE
 """
 
 # Gemini models to try, in order. The first one available on the key is used.
-DEFAULT_MODELS = ["gemini-2.5-flash", "gemini-3-flash-preview", "gemini-2.0-flash"]
+DEFAULT_MODELS = ["gemini-2.5-flash", "gemini-3-flash-preview", "gemini-2.5-flash-lite"]
 
 OUT_OF_SCOPE_REPLY = ("I can only help with this store's inventory: stock checks, low-stock alerts, "
                       "reorder suggestions and summaries. Try *\"Which items are running low?\"*")
@@ -140,21 +140,26 @@ class GeminiBot:
 
     def _ask(self, message: str) -> tuple[str, list[str]]:
         last_err = None
-        candidates = [self.model] if self.model else list(self.models)
+        candidates = [self.model] + [m for m in self.models if m != self.model] if self.model else list(self.models)
         tried_discovery = False
+        # Keep the conversation so far, so switching model does not lose context.
+        history = self.chat.get_history() if self.chat is not None else []
         while candidates:
             model = candidates.pop(0)
             try:
                 if self.chat is None or self.model != model:
-                    self.chat = self._new_chat(model)
+                    self.chat = self._new_chat(model, history)
                 response = self.chat.send_message(message)
                 self.model = model
                 return self._parse(response)
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 msg = str(e)
-                # Model not available on this key -> try the next one.
-                if "404" in msg or "NOT_FOUND" in msg or "not found" in msg.lower():
+                # Model retired, or its free quota used up -> try the next model
+                # (each Gemini model has its own free-tier quota).
+                if ("404" in msg or "NOT_FOUND" in msg or "not found" in msg.lower()
+                        or "429" in msg or "RESOURCE_EXHAUSTED" in msg):
+                    print(f"[StockSense] {model} unavailable ({msg[:80]}), trying next", file=sys.stderr, flush=True)
                     self.chat = None
                     self.model = None
                     if not candidates and not tried_discovery:
