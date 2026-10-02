@@ -223,7 +223,7 @@ def answer(user_text: str) -> tuple[str, list[str], str]:
                 reason = "Gemini API key rejected"
             else:
                 reason = "Gemini API unavailable"
-            st.session_state.ai_error = f"{reason}. Switched to basic mode."
+            st.session_state.ai_error = f"{reason}. Switched to basic mode. Details: {msg[:200]}"
             reply, tools = engine.basic_reply(user_text)
             return (f"_⚠️ {reason}, so this answer comes from basic mode (no AI)._\n\n" + reply), tools, "basic"
     reply, tools = engine.basic_reply(user_text)

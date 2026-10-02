@@ -94,7 +94,10 @@ class GeminiBot:
         from google.genai import types
 
         self.types = types
-        self.client = genai.Client(api_key=api_key)
+        # 45 s timeout and at most 2 attempts, so a slow or rate-limited API fails fast
+        # and the app can fall back to basic mode instead of hanging.
+        self.client = genai.Client(api_key=api_key, http_options=types.HttpOptions(
+            timeout=45000, retry_options=types.HttpRetryOptions(attempts=2)))
         self.models = models or DEFAULT_MODELS
         self.model = None
         self.chat = None
