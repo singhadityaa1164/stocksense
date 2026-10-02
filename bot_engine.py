@@ -12,6 +12,7 @@ Two modes:
 from __future__ import annotations
 
 import re
+import sys
 
 import inventory_tools as inv
 
@@ -101,18 +102,45 @@ class GeminiBot:
             system_instruction=SYSTEM_PROMPT,
             tools=inv.TOOLS,
             temperature=0.2,          # low = consistent answers to similar questions
-            max_output_tokens=1500,
+            max_output_tokens=8192,   # thinking models spend part of this budget before answering
             automatic_function_calling=types.AutomaticFunctionCallingConfig(maximum_remote_calls=6),
         )
 
     def _new_chat(self, model: str, history=None):
         return self.client.chats.create(model=model, config=self.config, history=history or [])
 
+    def _discover_models(self) -> list[str]:
+        """Ask the API which Flash models this key can use (model names change over time)."""
+        names = []
+        try:
+            for m in self.client.models.list():
+                name = (m.name or "").replace("models/", "")
+                actions = getattr(m, "supported_actions", None) or []
+                if "flash" in name and "generateContent" in actions and not any(
+                        x in name for x in ("image", "tts", "audio", "live", "embedding")):
+                    names.append(name)
+        except Exception as e:  # noqa: BLE001
+            print(f"[StockSense] model listing failed: {e!r}", file=sys.stderr, flush=True)
+        # Prefer newest versions, full Flash before Flash-Lite, stable before preview.
+        def rank(n):
+            v = re.search(r"gemini-(\d+(?:\.\d+)?)", n)
+            return ("lite" in n, "preview" in n or "exp" in n, -float(v.group(1)) if v else 0.0, n)
+        return sorted(names, key=rank)
+
     def ask(self, message: str) -> tuple[str, list[str]]:
         """Send a message. Returns (answer_markdown, tool_calls_made). Raises on API failure."""
+        try:
+            return self._ask(message)
+        except Exception as e:  # noqa: BLE001
+            print(f"[StockSense] Gemini error: {e!r}", file=sys.stderr, flush=True)
+            raise
+
+    def _ask(self, message: str) -> tuple[str, list[str]]:
         last_err = None
-        candidates = [self.model] if self.model else self.models
-        for model in candidates:
+        candidates = [self.model] if self.model else list(self.models)
+        tried_discovery = False
+        while candidates:
+            model = candidates.pop(0)
             try:
                 if self.chat is None or self.model != model:
                     self.chat = self._new_chat(model)
@@ -125,6 +153,11 @@ class GeminiBot:
                 # Model not available on this key -> try the next one.
                 if "404" in msg or "NOT_FOUND" in msg or "not found" in msg.lower():
                     self.chat = None
+                    self.model = None
+                    if not candidates and not tried_discovery:
+                        tried_discovery = True
+                        candidates = [m for m in self._discover_models() if m not in self.models]
+                        print(f"[StockSense] discovered models: {candidates}", file=sys.stderr, flush=True)
                     continue
                 raise
         raise RuntimeError(f"No Gemini model available: {last_err}")
@@ -140,7 +173,12 @@ class GeminiBot:
         text = (response.text or "").strip()
         # Garbage / empty response guard
         if not text or len(text) < 2:
-            raise ValueError("Empty response from model")
+            reason = ""
+            try:
+                reason = str(response.candidates[0].finish_reason)
+            except Exception:  # noqa: BLE001
+                pass
+            raise ValueError(f"Empty response from model (finish_reason={reason})")
         return text, calls
 
 
