@@ -155,7 +155,8 @@ class GeminiBot:
                     self.chat = self._new_chat(model, history)
                 response = self.chat.send_message(message)
                 self.model = model
-                return self._parse(response)
+                text, calls = self._parse(response)
+                return text, calls or self._calls_from_history()
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 msg = str(e)
@@ -174,6 +175,27 @@ class GeminiBot:
                     continue
                 raise
         raise RuntimeError(f"No Gemini model available: {last_err}")
+
+    @staticmethod
+    def _fmt_call(fc) -> str:
+        args = ", ".join(f"{k}={v!r}" for k, v in (fc.args or {}).items() if v not in ("", 0, None))
+        return f"{fc.name}({args})"
+
+    def _calls_from_history(self) -> list[str]:
+        """Tool calls made for the latest question, read from the chat history."""
+        calls = []
+        try:
+            history = self.chat.get_history()
+        except Exception:  # noqa: BLE001
+            return calls
+        for content in reversed(history):
+            parts = content.parts or []
+            found = [self._fmt_call(p.function_call) for p in parts
+                     if getattr(p, "function_call", None) and p.function_call.name]
+            calls = found + calls
+            if content.role == "user" and any(getattr(p, "text", None) for p in parts):
+                break
+        return calls
 
     def _parse(self, response) -> tuple[str, list[str]]:
         calls = []
