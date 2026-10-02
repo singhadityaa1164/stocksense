@@ -5,7 +5,6 @@ All numbers the chatbot reports come from these functions, never from the
 language model's own memory. The model only decides WHICH function to call
 and how to phrase the result.
 """
-from __future__ import annotations
 
 import difflib
 import math
@@ -192,7 +191,7 @@ def _match_score(query_tokens: list[str], haystack: str) -> float:
     return hits / len(query_tokens)
 
 
-def search_products(query: str, category: str = "", brand: str = "", max_price_inr: int = 0) -> dict:
+def search_products(query: str, category: str = "", brand: str = "", max_price_inr: float = 0) -> dict:
     """Look up products in store inventory by name, model, brand or category, with typo tolerance.
 
     Args:
